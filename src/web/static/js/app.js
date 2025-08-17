@@ -89,8 +89,6 @@ class HistoricalMapper {
 
     clearResults() {
         this.currentResults = [];
-        document.getElementById('results-section').style.display = 'none';
-        document.getElementById('results-container').innerHTML = '';
         // Clear map markers but keep map visible
         if (this.map) {
             this.clearMapMarkers();
@@ -157,7 +155,7 @@ class HistoricalMapper {
             </div>` : '';
         
         return `
-            <div class="location-card" onclick="historicalMapper.showLocationDetails('${location.name}')">
+            <div class="location-card" onclick="historicalMapper.selectLocationOnMap('${location.name}')">
                 <div class="location-header">
                     <div class="location-name">${location.name}</div>
                     <div class="location-coords">${coords}</div>
@@ -170,9 +168,7 @@ class HistoricalMapper {
                     </div>
                 </div>
                 <div class="location-actions">
-                    <button class="action-btn primary" onclick="event.stopPropagation(); historicalMapper.showLocationDetails('${location.name}')">
-                        <i class="fas fa-info-circle"></i> View Details
-                    </button>
+
                     <button class="action-btn" onclick="event.stopPropagation(); historicalMapper.showOnMap(${location.latitude}, ${location.longitude})">
                         <i class="fas fa-map"></i> Show on Map
                     </button>
@@ -283,9 +279,6 @@ class HistoricalMapper {
                 <h4>${location.name}</h4>
                 ${yearInfo}
                 <div class="popup-actions">
-                    <button class="popup-btn" onclick="historicalMapper.showLocationDetails('${location.name}')">
-                        <i class="fas fa-info-circle"></i> Details
-                    </button>
                     <button class="popup-btn secondary" onclick="historicalMapper.selectLocationOnMap('${location.name}')">
                         <i class="fas fa-crosshairs"></i> Select
                     </button>
@@ -323,10 +316,7 @@ class HistoricalMapper {
         // Show selection info
         this.showMapSelectionInfo(location);
         
-        // Show location details and database references
-        this.showLocationDetails(location.name);
-        
-        // Show database references panel
+        // Show database references panel (this will be the only content below the map)
         this.showDatabaseReferences(location);
     }
 
@@ -448,20 +438,7 @@ class HistoricalMapper {
                         ${primaryTier.tier_name} (${primaryTier.count})
                     </h5>
                     <div style="max-height: 300px; overflow-y: auto;">
-                        ${primaryTier.mentions.map(mention => `
-                            <div style="background: #f0fff4; padding: 1rem; border-radius: 8px; margin-bottom: 0.75rem; border-left: 4px solid #48bb78;">
-                                <div style="margin-bottom: 0.5rem; font-size: 0.9rem;">
-                                    <strong>${mention.title}</strong>
-                                    ${mention.historical_start_year && mention.historical_end_year ? 
-                                        `<span style="color: #718096; margin-left: 0.5rem;">(${mention.historical_start_year}-${mention.historical_end_year})</span>` : 
-                                        '<span style="color: #718096; margin-left: 0.5rem;">(Time period: Unknown)</span>'
-                                    }
-                                </div>
-                                <div style="background: white; padding: 0.75rem; border-radius: 6px; border-left: 3px solid #48bb78; font-style: italic;">
-                                    "${mention.context}"
-                                </div>
-                            </div>
-                        `).join('')}
+                        ${this.createGroupedMentionsHTML(primaryTier.mentions, 'primary')}
                     </div>
                 </div>
             `;
@@ -487,20 +464,7 @@ class HistoricalMapper {
                         ${secondaryTier.tier_name} (${secondaryTier.count})
                     </h5>
                     <div style="max-height: 300px; overflow-y: auto;">
-                        ${secondaryTier.mentions.map(mention => `
-                            <div style="background: #fef5e7; padding: 1rem; border-radius: 8px; margin-bottom: 0.75rem; border-left: 4px solid #e53e3e;">
-                                <div style="margin-bottom: 0.5rem; font-size: 0.9rem;">
-                                    <strong>${mention.title}</strong>
-                                    ${mention.historical_start_year && mention.historical_end_year ? 
-                                        `<span style="color: #718096; margin-left: 0.5rem;">(${mention.historical_start_year}-${mention.historical_end_year})</span>` : 
-                                        '<span style="color: #718096; margin-left: 0.5rem;">(Time period: Unknown)</span>'
-                                    }
-                                </div>
-                                <div style="background: white; padding: 0.75rem; border-radius: 6px; border-left: 3px solid #e53e3e; font-style: italic;">
-                                    "${mention.context}"
-                                </div>
-                            </div>
-                        `).join('')}
+                        ${this.createGroupedMentionsHTML(secondaryTier.mentions, 'secondary')}
                     </div>
                 </div>
             `;
@@ -512,6 +476,46 @@ class HistoricalMapper {
         }
         
         referencesContent.innerHTML = html;
+    }
+
+    createGroupedMentionsHTML(mentions, tierType) {
+        // Group mentions by book title
+        const bookGroups = {};
+        mentions.forEach(mention => {
+            if (!bookGroups[mention.title]) {
+                bookGroups[mention.title] = [];
+            }
+            bookGroups[mention.title].push(mention);
+        });
+        
+        const borderColor = tierType === 'primary' ? '#48bb78' : '#e53e3e';
+        const bgColor = tierType === 'primary' ? '#f0fff4' : '#fef5e7';
+        
+        return Object.entries(bookGroups).map(([bookTitle, bookMentions]) => `
+            <div class="book-mentions-group" style="border-left: 4px solid ${borderColor}; background: ${bgColor};">
+                <div class="book-mentions-header" onclick="historicalMapper.toggleBookMentions('${bookTitle.replace(/'/g, "\\'")}')">
+                    <i class="fas fa-chevron-right expand-icon" id="icon-${bookTitle.replace(/[^a-zA-Z0-9]/g, '-')}"></i>
+                    <strong>${bookTitle}</strong>
+                    <span class="mention-count" style="background: ${borderColor};">(${bookMentions.length} reference${bookMentions.length > 1 ? 's' : ''})</span>
+                </div>
+                <div class="book-mentions-content" id="content-${bookTitle.replace(/[^a-zA-Z0-9]/g, '-')}" style="display: none;">
+                    ${bookMentions.map(mention => `
+                        <div class="mention-item" style="background: white; border-left: 3px solid ${borderColor};">
+                            <div class="mention-header">
+                                <small class="mention-position">Position: ${mention.text_position}</small>
+                                ${mention.historical_start_year && mention.historical_end_year ? 
+                                    `<small style="color: #718096;">(${mention.historical_start_year}-${mention.historical_end_year})</small>` : 
+                                    '<small style="color: #718096;">(Time period: Unknown)</small>'
+                                }
+                            </div>
+                            <div class="mention-context" style="border-left: 3px solid ${borderColor};">
+                                "${mention.context}"
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `).join('');
     }
 
     showMapSelectionInfo(location) {
@@ -552,6 +556,12 @@ class HistoricalMapper {
             referencesPanel.remove();
         }
         
+        // Clear results section
+        const resultsSection = document.getElementById('results-section');
+        if (resultsSection) {
+            resultsSection.style.display = 'none';
+        }
+        
         // Reset marker icons
         this.markers.forEach(marker => {
             marker.setIcon(L.divIcon({
@@ -577,8 +587,8 @@ class HistoricalMapper {
             
             this.hideLoading();
             
-            // Display in modal
-            this.showModal(locationName, books, mentions);
+            // Display in results section instead of modal
+            this.displayLocationDetailsInResults(locationName, books, mentions);
             
         } catch (error) {
             console.error('Error fetching location details:', error);
@@ -587,63 +597,109 @@ class HistoricalMapper {
         }
     }
 
-    showModal(locationName, books, mentions) {
-        const modal = document.getElementById('location-modal');
-        const modalTitle = document.getElementById('modal-title');
-        const modalBody = document.getElementById('modal-body');
+    displayLocationDetailsInResults(locationName, books, mentions) {
+        // Show results section
+        const resultsSection = document.getElementById('results-section');
+        const resultsContainer = document.getElementById('results-container');
         
-        modalTitle.textContent = locationName;
+        // Create detailed results HTML
+        let resultsHtml = `
+            <div class="location-details-header">
+                <h3><i class="fas fa-map-marker-alt"></i> ${locationName}</h3>
+                <button class="action-btn" onclick="historicalMapper.clearResults()">
+                    <i class="fas fa-times"></i> Close Details
+                </button>
+            </div>
+        `;
         
-        let booksHtml = '';
+        // Add books information
         if (books.error) {
-            booksHtml = '<p style="color: #e53e3e;">No books found for this location.</p>';
+            resultsHtml += '<p style="color: #e53e3e;">No books found for this location.</p>';
         } else {
-            booksHtml = `
-                <h4 style="margin-bottom: 1rem; color: #2d3748;">
-                    <i class="fas fa-book"></i> Books Mentioning This Location
-                </h4>
-                <div style="margin-bottom: 2rem;">
-                    ${books.map(book => `
-                        <div style="background: #f7fafc; padding: 1rem; border-radius: 8px; margin-bottom: 0.5rem;">
-                            <strong>${book.title}</strong>
-                            ${book.url ? `<br><a href="${book.url}" target="_blank" style="color: #667eea; font-size: 0.9rem;">View Source</a>` : ''}
-                        </div>
-                    `).join('')}
+            resultsHtml += `
+                <div class="detail-section">
+                    <h4><i class="fas fa-book"></i> Books Mentioning This Location</h4>
+                    <div class="books-list">
+                        ${books.map(book => `
+                            <div class="book-item">
+                                <strong>${book.title}</strong>
+                                ${book.url ? `<br><a href="${book.url}" target="_blank" class="source-link">View Source</a>` : ''}
+                            </div>
+                        `).join('')}
+                    </div>
                 </div>
             `;
         }
         
-        let mentionsHtml = '';
+        // Add mentions information grouped by book
         if (mentions.error) {
-            mentionsHtml = '<p style="color: #e53e3e;">No mentions found for this location.</p>';
+            resultsHtml += '<p style="color: #e53e3e;">No mentions found for this location.</p>';
         } else {
-            mentionsHtml = `
-                <h4 style="margin-bottom: 1rem; color: #2d3748;">
-                    <i class="fas fa-quote-left"></i> Textual References
-                </h4>
-                <div style="max-height: 300px; overflow-y: auto;">
-                    ${mentions.map(mention => `
-                        <div style="background: #f7fafc; padding: 1rem; border-radius: 8px; margin-bottom: 0.5rem;">
-                            <div style="margin-bottom: 0.5rem;">
-                                <strong>${mention.title}</strong>
-                                <small style="color: #718096; margin-left: 0.5rem;">Position: ${mention.text_position}</small>
+            // Group mentions by book title
+            const bookGroups = {};
+            mentions.forEach(mention => {
+                if (!bookGroups[mention.title]) {
+                    bookGroups[mention.title] = [];
+                }
+                bookGroups[mention.title].push(mention);
+            });
+            
+            resultsHtml += `
+                <div class="detail-section">
+                    <h4><i class="fas fa-quote-left"></i> Textual References by Book</h4>
+                    <div class="mentions-list">
+                        ${Object.entries(bookGroups).map(([bookTitle, bookMentions]) => `
+                            <div class="book-mentions-group">
+                                <div class="book-mentions-header" onclick="historicalMapper.toggleBookMentions('${bookTitle.replace(/'/g, "\\'")}')">
+                                    <i class="fas fa-chevron-right expand-icon" id="icon-${bookTitle.replace(/[^a-zA-Z0-9]/g, '-')}"></i>
+                                    <strong>${bookTitle}</strong>
+                                    <span class="mention-count">(${bookMentions.length} reference${bookMentions.length > 1 ? 's' : ''})</span>
+                                </div>
+                                <div class="book-mentions-content" id="content-${bookTitle.replace(/[^a-zA-Z0-9]/g, '-')}" style="display: none;">
+                                    ${bookMentions.map(mention => `
+                                        <div class="mention-item">
+                                            <div class="mention-header">
+                                                <small class="mention-position">Position: ${mention.text_position}</small>
+                                            </div>
+                                            <div class="mention-context">
+                                                "${mention.context}"
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                                </div>
                             </div>
-                            <div style="background: white; padding: 0.75rem; border-radius: 6px; border-left: 3px solid #667eea;">
-                                "${mention.context}"
-                            </div>
-                        </div>
-                    `).join('')}
+                        `).join('')}
+                    </div>
                 </div>
             `;
         }
         
-        modalBody.innerHTML = booksHtml + mentionsHtml;
-        modal.style.display = 'block';
+        resultsContainer.innerHTML = resultsHtml;
+        resultsSection.style.display = 'block';
+        
+        // Scroll to results section
+        resultsSection.scrollIntoView({ behavior: 'smooth' });
     }
 
-    closeModal() {
-        document.getElementById('location-modal').style.display = 'none';
+    toggleBookMentions(bookTitle) {
+        const safeId = bookTitle.replace(/[^a-zA-Z0-9]/g, '-');
+        const content = document.getElementById(`content-${safeId}`);
+        const icon = document.getElementById(`icon-${safeId}`);
+        
+        if (content.style.display === 'none') {
+            // Expand
+            content.style.display = 'block';
+            icon.className = 'fas fa-chevron-down expand-icon';
+        } else {
+            // Collapse
+            content.style.display = 'none';
+            icon.className = 'fas fa-chevron-right expand-icon';
+        }
     }
+
+
+
+
 
     showOnMap(lat, lng) {
         if (lat && lng) {
@@ -660,9 +716,7 @@ function searchLocations() {
     historicalMapper.searchLocations();
 }
 
-function closeModal() {
-    historicalMapper.closeModal();
-}
+
 
 // Initialize the app when DOM is loaded
 let historicalMapper;
@@ -686,8 +740,9 @@ HistoricalMapper.prototype.searchByLocation = async function(locationName) {
             return;
         }
         
-        // Create a mock location object for display
-        const location = {
+        // Show the details immediately in the database references panel
+        // Create a mock location object for the database references panel
+        const mockLocation = {
             id: 'search-result',
             name: locationName,
             latitude: null,
@@ -696,10 +751,8 @@ HistoricalMapper.prototype.searchByLocation = async function(locationName) {
             historical_end_year: null
         };
         
-        this.displayResults([location], 'location', { locationName });
-        
-        // Show the details immediately
-        this.showLocationDetails(locationName);
+        // Show database references panel
+        this.showDatabaseReferences(mockLocation);
         
     } catch (error) {
         console.error('Error searching by location:', error);

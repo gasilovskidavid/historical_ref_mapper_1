@@ -4,6 +4,12 @@ import requests
 from typing import List, Dict, Optional
 from dataclasses import dataclass
 import re
+import sys
+import os
+
+# Add the database directory to the path to import enhance_time_periods
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'database'))
+from enhance_time_periods import extract_book_time_period
 
 @dataclass
 class LocationMention:
@@ -154,6 +160,46 @@ class BookProcessor:
         print("Could not extract title, using generic name")
         return "Unknown Book"
     
+    def extract_book_description(self, text: str) -> str:
+        """Extract book description or summary from Gutenberg text."""
+        try:
+            # Look for description patterns in Gutenberg text
+            desc_patterns = [
+                r'Summary:\s*(.+?)(?:\n\n|\n[A-Z]|$)',  # Summary: description
+                r'Description:\s*(.+?)(?:\n\n|\n[A-Z]|$)',  # Description: description
+                r'About\s+this\s+book:\s*(.+?)(?:\n\n|\n[A-Z]|$)',  # About this book: description
+                r'Introduction:\s*(.+?)(?:\n\n|\n[A-Z]|$)',  # Introduction: description
+            ]
+            
+            for pattern in desc_patterns:
+                match = re.search(pattern, text[:5000], re.IGNORECASE | re.DOTALL)  # Search first 5000 chars
+                if match:
+                    description = match.group(1).strip()
+                    if len(description) > 20 and len(description) < 500:  # Reasonable description length
+                        print(f"Extracted description: {description[:100]}...")
+                        return description
+            
+            # Fallback: use first paragraph that might be descriptive
+            lines = text.split('\n')
+            for i, line in enumerate(lines[:50]):  # Check first 50 lines
+                line = line.strip()
+                if (len(line) > 50 and len(line) < 300 and 
+                    not line.startswith('The Project Gutenberg') and
+                    not line.startswith('Title:') and
+                    not line.startswith('Author:') and
+                    not line.startswith('Release Date:') and
+                    not line.isupper() and
+                    not line.isdigit() and
+                    line.endswith('.') and
+                    i > 5):  # Skip first few lines (usually metadata)
+                    print(f"Fallback description: {line[:100]}...")
+                    return line
+                    
+        except Exception as e:
+            print(f"Error extracting description: {e}")
+        
+        return ""
+    
     def clean_gutenberg_text(self, text: str) -> str:
         """Remove Project Gutenberg headers and footers."""
         start_marker = "*** START OF THE PROJECT GUTENBERG EBOOK"
@@ -251,7 +297,7 @@ class DatabaseManager:
         if self.conn:
             self.conn.close()
     
-    def store_book(self, title: str, url: str) -> int:
+    def store_book(self, title: str, url: str, description: str = "") -> int:
         """Store a book and return its ID."""
         if not self.conn:
             self.connect()
@@ -267,12 +313,49 @@ class DatabaseManager:
         
         # Insert new book
         self.cursor.execute('''
-            INSERT INTO books (title, url) 
-            VALUES (?, ?)
-        ''', (title, url))
+            INSERT INTO books (title, url, description) 
+            VALUES (?, ?, ?)
+        ''', (title, url, description))
         
         book_id = self.cursor.lastrowid
-        self.conn.commit()
+        
+        # Extract and update time periods for the newly stored book
+        try:
+            time_info = extract_book_time_period(title, description)
+            if time_info['start_year'] and time_info['end_year']:
+                self.cursor.execute('''
+                    UPDATE books 
+                    SET 
+                        historical_start_year = ?,
+                        historical_end_year = ?,
+                        time_period_description = ?,
+                        period_status = ?
+                    WHERE id = ?
+                ''', (
+                    time_info['start_year'],
+                    time_info['end_year'],
+                    time_info['description'],
+                    time_info['period_status']
+                ))
+                self.conn.commit()
+                print(f"✓ Extracted time period: {time_info['start_year']}-{time_info['end_year']} ({time_info['confidence']} confidence)")
+            else:
+                # Mark book as having unknown time period
+                self.cursor.execute('''
+                    UPDATE books 
+                    SET 
+                        period_status = ?,
+                        time_period_description = ?
+                    WHERE id = ?
+                ''', (
+                    time_info['period_status'],
+                    time_info['description']
+                ))
+                self.conn.commit()
+                print(f"⚠️  No time period found - marked as {time_info['period_status']}")
+        except Exception as e:
+            print(f"⚠️  Time period extraction failed: {e}")
+        
         print(f"Stored new book: {title} (ID: {book_id})")
         return book_id
     
@@ -310,9 +393,12 @@ def process_book(url: str, gazetteer_path: str = 'history_map.db') -> bool:
         if not text:
             return False
         
-        # Extract title and clean text
+        # Extract title and description
         title = processor.extract_book_title(text)
+        description = processor.extract_book_description(text)
         print(f"Extracted title: {title}")
+        if description:
+            print(f"Extracted description: {description[:100]}...")
         
         clean_text = processor.clean_gutenberg_text(text)
         
@@ -322,7 +408,7 @@ def process_book(url: str, gazetteer_path: str = 'history_map.db') -> bool:
         
         if mentions:
             # Store in database
-            book_id = db_manager.store_book(title, url)
+            book_id = db_manager.store_book(title, url, description)
             db_manager.store_mentions(book_id, mentions)
             print(f"Stored {len(mentions)} mentions for book ID {book_id}")
             

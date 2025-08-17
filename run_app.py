@@ -7,13 +7,11 @@ import os
 import sys
 
 # Add src directory to path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
-
-# Change to src/web directory
-os.chdir(os.path.join(os.path.dirname(__file__), 'src', 'web'))
+src_path = os.path.join(os.path.dirname(__file__), 'src')
+sys.path.insert(0, src_path)
 
 # Import and run the Flask app
-from app_api import app
+from web.app_api import app
 
 if __name__ == '__main__':
     print("🚀 Starting Historical Reference Mapper...")
