@@ -1,6 +1,7 @@
 Flask==2.3.3
 spacy==3.7.2
 requests==2.31.0
-bliss==0.7.9
+blis==0.7.9
 beautifulsoup4==4.12.2
+
 
