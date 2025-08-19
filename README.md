@@ -2,7 +2,9 @@
 
 A comprehensive web application for mapping historical locations mentioned in books, with intelligent location extraction, gazetteer matching, and interactive visualization.
 
-## 🌟 Features
+**Live Demo**: [https://historical-ref-mapper-1-6lrl.onrender.com/](https://historical-ref-mapper-1-6lrl.onrender.com/)
+
+## Features
 
 - **Interactive Map Interface**: Leaflet.js-based map showing locations with book references
 - **Intelligent Location Extraction**: NLP-powered extraction using spaCy for named entity recognition
@@ -12,7 +14,7 @@ A comprehensive web application for mapping historical locations mentioned in bo
 - **Batch Processing**: Efficient processing of thousands of books
 - **Context Preservation**: Full context around each location mention stored
 
-## 🏗️ Repository Structure
+## Repository Structure
 
 ```
 historical_ref_mapper/
@@ -44,9 +46,9 @@ historical_ref_mapper/
 └── README.md                     # This file
 ```
 
-## 📁 File Descriptions
+## File Descriptions
 
-### **Processing Scripts** (`src/processing/`)
+### Processing Scripts (`src/processing/`)
 
 - **`extract_locations_updated.py`**: Core location extraction script using spaCy NLP
   - Downloads books from Gutenberg URLs
@@ -65,7 +67,7 @@ historical_ref_mapper/
   - Contains URLs, titles, authors, and metadata
   - Supports batch processing workflows
 
-### **Database Scripts** (`src/database/`)
+### Database Scripts (`src/database/`)
 
 - **`database_integration.py`**: Database setup and integration utilities
   - Creates and manages database schema
@@ -80,7 +82,7 @@ historical_ref_mapper/
   - Extracts year ranges from book titles
   - Assigns historical periods to books
 
-### **Web Application** (`src/web/`)
+### Web Application (`src/web/`)
 
 - **`app_api.py`**: Flask web server and API endpoints
   - `/api/locations_by_year`: Year-filtered location data
@@ -105,7 +107,7 @@ historical_ref_mapper/
   - Dynamic content updates
   - User interaction handling
 
-### **Data Files** (`data/`)
+### Data Files (`data/`)
 
 - **`history_map.db`**: Main SQLite database
   - `locations`: Geographic locations with coordinates
@@ -118,7 +120,7 @@ historical_ref_mapper/
   - `whg_europe.json`: World Historical Gazetteer data
   - `hre_gazetteer_lookup.json`: Holy Roman Empire locations
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 - Python 3.8+
@@ -135,116 +137,118 @@ historical_ref_mapper/
 2. **Open browser**: Navigate to `http://127.0.0.1:5000`
 3. **Process books**: Use `python src/processing/batch_process_books.py`
 
-## 🔧 Usage
+## Usage
 
-### **Processing New Books**
+### Processing New Books
 1. Add book URLs to `src/processing/books_to_process.json`
 2. Run `python src/processing/batch_process_books.py`
 3. Books are automatically processed and added to database
 
-### **Web Interface**
+### Web Interface
 1. **Map Navigation**: Pan and zoom to explore locations
 2. **Year Filtering**: Set year range to filter references
 3. **Location Selection**: Click markers to view references
 4. **Reference Display**: Two-tier system shows relevant and additional references
 
-### **Database Management**
+### Database Management
 - **Add locations**: Use gazetteer preprocessing scripts
 - **Update periods**: Run time period enhancement scripts
 - **Optimize performance**: Database indexes are automatically created
 
-## 🎯 Key Workflows
+## Key Workflows
 
-### **Location Extraction Pipeline**
+### Location Extraction Pipeline
 1. **Download**: Book text from Gutenberg URLs
 2. **Process**: NLP entity recognition with spaCy
 3. **Match**: Entities to gazetteer database
 4. **Store**: Mentions with context and metadata
 5. **Display**: Interactive map with references
 
-### **Two-Tier Reference System**
+### Two-Tier Reference System
 - **Primary Tier**: References matching selected year range
 - **Secondary Tier**: References outside year range or unperiodized
 - **Context**: Full text context around each mention
 
-## 🔍 Technical Details
+## Technical Details
 
-### **NLP Processing**
+### NLP Processing
 - **Model**: spaCy `en_core_web_sm`
 - **Entities**: GPE (countries), LOC (locations), FAC (facilities)
 - **Chunking**: 500K character chunks for memory efficiency
 - **Confidence**: Scoring based on entity type and name matching
 
-### **Database Schema**
+### Database Schema
 - **Normalized design** with foreign key relationships
 - **Indexed queries** for performance
 - **Efficient storage** of large text contexts
 - **Scalable structure** for thousands of books
 
-### **Performance Optimizations**
+### Performance Optimizations
 - **Chunked text processing** for large books
 - **Database indexing** on frequently queried columns
 - **Efficient gazetteer matching** with multiple strategies
 - **Memory management** for large datasets
 
-## 🚀 Production Deployment
+## Production Deployment
 
-### **Scaling Considerations**
+The application is now live and deployed at: [https://historical-ref-mapper-1-6lrl.onrender.com/](https://historical-ref-mapper-1-6lrl.onrender.com/)
+
+### Scaling Considerations
 - **Database**: Consider PostgreSQL for larger datasets
 - **Processing**: Implement queue-based processing for thousands of books
 - **Caching**: Add Redis for frequently accessed data
 - **Load Balancing**: Multiple web server instances
 
-### **Security**
+### Security
 - **Input validation** for book URLs
 - **Rate limiting** for API endpoints
 - **Database connection** pooling
 - **Error handling** and logging
 
-## 🤝 Contributing
+## Contributing
 
-### **Development Setup**
+### Development Setup
 1. Fork the repository
 2. Create feature branch
 3. Follow existing code style
 4. Test thoroughly
 5. Submit pull request
 
-### **Code Standards**
+### Code Standards
 - **Python**: PEP 8 compliance
 - **JavaScript**: ES6+ with consistent formatting
 - **Documentation**: Clear docstrings and comments
 - **Testing**: Unit tests for critical functions
 
-## 📊 Performance Metrics
+## Performance Metrics
 
-### **Current Capabilities**
+### Current Capabilities
 - **Books processed**: 3 (tested)
 - **Locations extracted**: 1,181 mentions
 - **Processing speed**: ~2-3 minutes per book
 - **Database size**: ~20MB (with test data)
 
-### **Scalability Targets**
+### Scalability Targets
 - **Books**: 10,000+ books
 - **Locations**: 100,000+ mentions
 - **Users**: Concurrent web interface access
 - **Performance**: Sub-second query response
 
-## 🔮 Future Enhancements
+## Future Enhancements
 
-### **Planned Features**
+### Planned Features
 - **Advanced search**: Full-text search across contexts
 - **Temporal visualization**: Timeline-based location display
 - **Export functionality**: Data export in various formats
 - **API documentation**: OpenAPI/Swagger specification
 
-### **Research Applications**
+### Research Applications
 - **Historical analysis**: Temporal and spatial patterns
 - **Text mining**: Advanced NLP for historical research
 - **Data visualization**: Interactive charts and graphs
 - **Collaborative features**: Multi-user annotation
 
-## 📞 Support
+## Support
 
 For questions, issues, or contributions:
 - **Repository**: GitHub issues and discussions
