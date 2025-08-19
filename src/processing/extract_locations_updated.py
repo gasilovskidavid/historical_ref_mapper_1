@@ -9,7 +9,7 @@ import os
 
 # Add the database directory to the path to import enhance_time_periods
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'database'))
-from enhance_time_periods import extract_book_time_period
+from enhance_time_periods import extract_time_periods_from_text
 
 @dataclass
 class LocationMention:
@@ -321,38 +321,57 @@ class DatabaseManager:
         
         # Extract and update time periods for the newly stored book
         try:
-            time_info = extract_book_time_period(title, description)
-            if time_info['start_year'] and time_info['end_year']:
-                self.cursor.execute('''
-                    UPDATE books 
-                    SET 
-                        historical_start_year = ?,
-                        historical_end_year = ?,
-                        time_period_description = ?,
-                        period_status = ?
-                    WHERE id = ?
-                ''', (
-                    time_info['start_year'],
-                    time_info['end_year'],
-                    time_info['description'],
-                    time_info['period_status']
-                ))
-                self.conn.commit()
-                print(f"✓ Extracted time period: {time_info['start_year']}-{time_info['end_year']} ({time_info['confidence']} confidence)")
+            time_info = extract_time_periods_from_text(title + " " + (description or ""))
+            
+            # Convert the time info to the expected format
+            start_year = None
+            end_year = None
+            time_description = "No specific time period found"
+            period_status = "unknown"
+            
+            if time_info.get('year'):
+                years = [int(y) for y in time_info['year'] if y.isdigit()]
+                if years:
+                    start_year = min(years)
+                    end_year = max(years)
+                    time_description = f"Years mentioned: {', '.join(time_info['year'])}"
+                    period_status = "known"
+            
+            if time_info.get('century'):
+                centuries = time_info['century']
+                time_description += f"; Centuries: {', '.join(centuries)}"
+                if not start_year:
+                    period_status = "approximate"
+            
+            if time_info.get('period'):
+                periods = time_info['period']
+                time_description += f"; Periods: {', '.join(periods)}"
+                if not start_year:
+                    period_status = "approximate"
+            
+            # Update the book with time period information
+            self.cursor.execute('''
+                UPDATE books 
+                SET 
+                    historical_start_year = ?,
+                    historical_end_year = ?,
+                    time_period_description = ?,
+                    period_status = ?
+                WHERE id = ?
+            ''', (
+                start_year,
+                end_year,
+                time_description,
+                period_status,
+                book_id
+            ))
+            self.conn.commit()
+            
+            if start_year and end_year:
+                print(f"✓ Extracted time period: {start_year}-{end_year} ({period_status})")
             else:
-                # Mark book as having unknown time period
-                self.cursor.execute('''
-                    UPDATE books 
-                    SET 
-                        period_status = ?,
-                        time_period_description = ?
-                    WHERE id = ?
-                ''', (
-                    time_info['period_status'],
-                    time_info['description']
-                ))
-                self.conn.commit()
-                print(f"⚠️  No time period found - marked as {time_info['period_status']}")
+                print(f"⚠️  No specific time period found - marked as {period_status}")
+                
         except Exception as e:
             print(f"⚠️  Time period extraction failed: {e}")
         
