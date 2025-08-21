@@ -99,7 +99,8 @@ def enhance_database_with_time_periods():
 def extract_time_periods_from_text(text):
     """Extract time periods and dates from text content."""
     time_patterns = {
-        'year': r'\b(1[0-9]{3}|2[0-9]{3})\b',  # Years 1000-2999
+        'year_range': r'\b(1[0-9]{3}|2[0-9]{3})\s*-\s*(1[0-9]{3}|2[0-9]{3})\b',  # Year ranges like "1559-1576"
+        'year': r'\b(1[0-9]{3}|2[0-9]{3})\b',  # Individual years 1000-2999
         'century': r'\b(\d{1,2})(?:st|nd|rd|th)\s+century\b',  # 1st century, 2nd century, etc.
         'era': r'\b(BCE?|AD|CE)\b',  # Before Christ, Anno Domini, Common Era
         'dynasty': r'\b(?:House of|Dynasty of|reign of)\s+([A-Z][a-z]+)\b',
@@ -108,10 +109,35 @@ def extract_time_periods_from_text(text):
     
     extracted_times = {}
     
+    # First look for year ranges
+    year_ranges = re.findall(time_patterns['year_range'], text, re.IGNORECASE)
+    if year_ranges:
+        # Extract individual years from ranges
+        all_years = []
+        for range_match in year_ranges:
+            if isinstance(range_match, tuple):
+                # If it's a tuple, extract both years
+                start_year, end_year = range_match
+                all_years.extend([start_year, end_year])
+            else:
+                # If it's a string, split by dash
+                years = range_match.split('-')
+                all_years.extend([y.strip() for y in years])
+        
+        extracted_times['year'] = all_years
+    
+    # Then look for individual years (but skip if we already found them in ranges)
+    if 'year' not in extracted_times:
+        individual_years = re.findall(time_patterns['year'], text, re.IGNORECASE)
+        if individual_years:
+            extracted_times['year'] = list(set(individual_years))
+    
+    # Look for other patterns
     for time_type, pattern in time_patterns.items():
-        matches = re.findall(pattern, text, re.IGNORECASE)
-        if matches:
-            extracted_times[time_type] = list(set(matches))
+        if time_type not in ['year_range', 'year']:  # Skip year patterns we already handled
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            if matches:
+                extracted_times[time_type] = list(set(matches))
     
     return extracted_times
 
