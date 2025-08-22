@@ -205,21 +205,6 @@ The application is now live and deployed at: [https://historical-ref-mapper-1-6l
 - **Database connection** pooling
 - **Error handling** and logging
 
-## Contributing
-
-### Development Setup
-1. Fork the repository
-2. Create feature branch
-3. Follow existing code style
-4. Test thoroughly
-5. Submit pull request
-
-### Code Standards
-- **Python**: PEP 8 compliance
-- **JavaScript**: ES6+ with consistent formatting
-- **Documentation**: Clear docstrings and comments
-- **Testing**: Unit tests for critical functions
-
 ## Performance Metrics
 
 ### Current Capabilities
