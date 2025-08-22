@@ -13,12 +13,30 @@ DATABASE_FILE = 'history_map.db'
 # Initialize the Flask application
 app = Flask(__name__)
 
+# Add startup logging to show database type
+def log_database_info():
+    """Log database configuration on first request."""
+    db_type = get_database_type()
+    print(f"🚀 App starting with database type: {db_type}")
+    
+    if db_type == 'postgresql':
+        print(f"📊 PostgreSQL host: {os.getenv('DB_HOST')}")
+        print(f"📊 PostgreSQL database: {os.getenv('DB_NAME')}")
+    else:
+        print(f"💾 Using SQLite database: {DATABASE_FILE}")
+
 # --- Database Configuration ---
 def get_database_type() -> str:
     """Determine which database to use based on environment variables."""
     if os.getenv('DB_TYPE') == 'postgresql':
         return 'postgresql'
     return 'sqlite'  # Default fallback
+
+def get_sql_placeholder() -> str:
+    """Get the correct SQL parameter placeholder for the current database."""
+    if get_database_type() == 'postgresql':
+        return '%s'
+    return '?'
 
 def get_db_connection():
     """Creates a connection to the database based on configuration."""
@@ -55,7 +73,8 @@ def get_postgresql_connection():
             port=os.getenv('DB_PORT', 5432),
             database=os.getenv('DB_NAME'),
             user=os.getenv('DB_USER'),
-            password=os.getenv('DB_PASSWORD')
+            password=os.getenv('DB_PASSWORD'),
+            cursor_factory=RealDictCursor
         )
         return conn
     except ImportError:
@@ -124,6 +143,74 @@ def index():
 
 # --- API Endpoints ---
 
+@app.route('/api/database/status', methods=['GET'])
+def get_database_status():
+    """
+    Endpoint to check database status and configuration.
+    This helps verify which database is being used.
+    """
+    try:
+        db_type = get_database_type()
+        status = {
+            "database_type": db_type,
+            "status": "unknown",
+            "message": "",
+            "details": {}
+        }
+        
+        if db_type == 'postgresql':
+            status["details"] = {
+                "host": os.getenv('DB_HOST'),
+                "port": os.getenv('DB_PORT', 5432),
+                "database": os.getenv('DB_NAME'),
+                "user": os.getenv('DB_USER')
+            }
+            
+            # Test PostgreSQL connection
+            try:
+                conn = get_postgresql_connection()
+                cursor = conn.cursor()
+                cursor.execute("SELECT version()")
+                version = cursor.fetchone()
+                cursor.close()
+                conn.close()
+                
+                status["status"] = "connected"
+                status["message"] = "PostgreSQL connection successful"
+                status["details"]["version"] = version[0] if version else "Unknown"
+                
+            except Exception as e:
+                status["status"] = "error"
+                status["message"] = f"PostgreSQL connection failed: {str(e)}"
+                
+        else:
+            # Test SQLite connection
+            try:
+                conn = get_sqlite_connection()
+                cursor = conn.cursor()
+                cursor.execute("SELECT sqlite_version()")
+                version = cursor.fetchone()
+                cursor.close()
+                conn.close()
+                
+                status["status"] = "connected"
+                status["message"] = "SQLite connection successful"
+                status["details"]["version"] = version[0] if version else "Unknown"
+                status["details"]["file"] = DATABASE_FILE
+                
+            except Exception as e:
+                status["status"] = "error"
+                status["message"] = f"SQLite connection failed: {str(e)}"
+        
+        return jsonify(status)
+        
+    except Exception as e:
+        return jsonify({
+            "database_type": "unknown",
+            "status": "error",
+            "message": f"Status check failed: {str(e)}"
+        }), 500
+
 @app.route('/api/locations', methods=['GET'])
 def get_all_locations():
     """
@@ -152,21 +239,22 @@ def get_all_locations():
     try:
         # Use a single optimized query with window functions for better performance
         # Only show locations that have references (mentions)
+        placeholder = get_sql_placeholder()
         if search:
-            query = """
+            query = f"""
                 SELECT 
                     l.id, l.name, l.latitude, l.longitude,
                     COUNT(*) OVER() as total_count
                 FROM locations l
                 INNER JOIN mentions m ON l.id = m.location_id
-                WHERE l.name LIKE ? 
+                WHERE l.name LIKE {placeholder} 
                 GROUP BY l.id, l.name, l.latitude, l.longitude
                 ORDER BY l.name 
-                LIMIT ? OFFSET ?
+                LIMIT {placeholder} OFFSET {placeholder}
             """
             cursor.execute(query, (f'%{search}%', limit, offset))
         else:
-            query = """
+            query = f"""
                 SELECT 
                     l.id, l.name, l.latitude, l.longitude,
                     COUNT(*) OVER() as total_count
@@ -174,7 +262,7 @@ def get_all_locations():
                 INNER JOIN mentions m ON l.id = m.location_id
                 GROUP BY l.id, l.name, l.latitude, l.longitude
                 ORDER BY l.name 
-                LIMIT ? OFFSET ?
+                LIMIT {placeholder} OFFSET {placeholder}
             """
             cursor.execute(query, (limit, offset))
         
@@ -256,7 +344,8 @@ def get_books_by_location(location_name):
     cursor = conn.cursor()
     
     # This is the powerful SQL query that joins our three tables
-    query = """
+    placeholder = get_sql_placeholder()
+    query = f"""
         SELECT
             b.id,
             b.title,
@@ -268,7 +357,7 @@ def get_books_by_location(location_name):
         JOIN
             locations l ON l.id = m.location_id
         WHERE
-            l.name = ?
+            l.name = {placeholder}
     """
     
     cursor.execute(query, (location_name,))
@@ -293,7 +382,8 @@ def get_mentions_by_location(location_name):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    query = """
+    placeholder = get_sql_placeholder()
+    query = f"""
         SELECT
             b.title,
             l.name as location_name,
@@ -308,7 +398,7 @@ def get_mentions_by_location(location_name):
         JOIN
             locations l ON l.id = m.location_id
         WHERE
-            l.name = ?
+            l.name = {placeholder}
         ORDER BY
             m.text_position
     """
@@ -340,8 +430,9 @@ def get_mentions_by_location_and_year(location_name):
     cursor = conn.cursor()
     
     try:
+        placeholder = get_sql_placeholder()
         # Get year-matched mentions (books that overlap with the selected range)
-        year_matched_query = """
+        year_matched_query = f"""
             SELECT
                 b.title,
                 b.historical_start_year,
@@ -359,17 +450,17 @@ def get_mentions_by_location_and_year(location_name):
             JOIN
                 locations l ON l.id = m.location_id
             WHERE
-                l.name = ? 
+                l.name = {placeholder} 
                 AND b.historical_start_year IS NOT NULL 
                 AND b.historical_end_year IS NOT NULL
-                AND b.historical_start_year <= ? 
-                AND b.historical_end_year >= ?
+                AND b.historical_start_year <= {placeholder} 
+                AND b.historical_end_year >= {placeholder}
             ORDER BY
                 m.text_position
         """
         
         # Get year-mismatched and unperiodized mentions
-        other_mentions_query = """
+        other_mentions_query = f"""
             SELECT
                 b.title,
                 b.historical_start_year,
@@ -391,12 +482,12 @@ def get_mentions_by_location_and_year(location_name):
             JOIN
                 locations l ON l.id = m.location_id
             WHERE
-                l.name = ?
+                l.name = {placeholder}
                 AND (
                     b.historical_start_year IS NULL 
                     OR b.historical_end_year IS NULL
-                    OR b.historical_start_year > ? 
-                    OR b.historical_end_year < ?
+                    OR b.historical_start_year > {placeholder} 
+                    OR b.historical_end_year < {placeholder}
                 )
             ORDER BY
                 m.text_position
@@ -457,30 +548,31 @@ def search_locations():
     try:
         # Use database-level search with multiple strategies for better results
         search_pattern = f'%{query}%'
+        placeholder = get_sql_placeholder()
         
         # First try exact match
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT id, name, latitude, longitude, 1 as relevance
             FROM locations 
-            WHERE LOWER(name) = LOWER(?)
+            WHERE LOWER(name) = LOWER({placeholder})
         """, (query,))
         exact_matches = cursor.fetchall()
         
         # Then try starts with
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT id, name, latitude, longitude, 2 as relevance
             FROM locations 
-            WHERE LOWER(name) LIKE LOWER(?) AND LOWER(name) != LOWER(?)
+            WHERE LOWER(name) LIKE LOWER({placeholder}) AND LOWER(name) != LOWER({placeholder})
         """, (f'{query}%', query))
         starts_with = cursor.fetchall()
         
         # Finally try contains
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT id, name, latitude, longitude, 3 as relevance
             FROM locations 
-            WHERE LOWER(name) LIKE ? 
-            AND LOWER(name) NOT LIKE LOWER(?) 
-            AND LOWER(name) NOT LIKE LOWER(?)
+            WHERE LOWER(name) LIKE {placeholder} 
+            AND LOWER(name) NOT LIKE LOWER({placeholder}) 
+            AND LOWER(name) NOT LIKE LOWER({placeholder})
         """, (search_pattern, f'{query}%', query))
         contains = cursor.fetchall()
         
@@ -573,15 +665,29 @@ def get_locations_by_year():
     
     try:
         # Use year range filtering - only show locations with references
-        query = """
-            SELECT DISTINCT l.id, l.name, l.latitude, l.longitude,
-                   b.historical_start_year, b.historical_end_year
-            FROM locations l
-            INNER JOIN mentions m ON l.id = m.location_id
-            INNER JOIN books b ON m.book_id = b.id
-            WHERE (b.historical_start_year <= ? AND b.historical_end_year >= ?)
-            ORDER BY l.name
-        """
+        db_type = get_database_type()
+        
+        if db_type == 'postgresql':
+            query = """
+                SELECT DISTINCT l.id, l.name, l.latitude, l.longitude,
+                       b.historical_start_year, b.historical_end_year
+                FROM locations l
+                INNER JOIN mentions m ON l.id = m.location_id
+                INNER JOIN books b ON m.book_id = b.id
+                WHERE (b.historical_start_year <= %s AND b.historical_end_year >= %s)
+                ORDER BY l.name
+            """
+        else:
+            query = """
+                SELECT DISTINCT l.id, l.name, l.latitude, l.longitude,
+                       b.historical_start_year, b.historical_end_year
+                FROM locations l
+                INNER JOIN mentions m ON l.id = m.location_id
+                INNER JOIN books b ON m.book_id = b.id
+                WHERE (b.historical_start_year <= ? AND b.historical_end_year >= ?)
+                ORDER BY l.name
+            """
+        
         cursor.execute(query, (end_year, start_year))
         
         locations = cursor.fetchall()
@@ -620,8 +726,8 @@ def bad_request(error):
 
 # --- Main Execution ---
 if __name__ == '__main__':
-    # Optimize the database for better performance
-    optimize_database()
+    # Log database info on startup
+    log_database_info()
     
     # The host='0.0.0.0' makes the server accessible on your local network
     # Disable debug mode for better performance in production
