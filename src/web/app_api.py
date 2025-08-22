@@ -1,6 +1,11 @@
 from flask import Flask, jsonify, request, render_template
 import sqlite3
 from difflib import get_close_matches
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # --- Configuration ---
 DATABASE_FILE = 'history_map.db'
@@ -8,9 +13,24 @@ DATABASE_FILE = 'history_map.db'
 # Initialize the Flask application
 app = Flask(__name__)
 
-# --- Helper Function ---
+# --- Database Configuration ---
+def get_database_type() -> str:
+    """Determine which database to use based on environment variables."""
+    if os.getenv('DB_TYPE') == 'postgresql':
+        return 'postgresql'
+    return 'sqlite'  # Default fallback
+
 def get_db_connection():
-    """Creates a connection to the SQLite database."""
+    """Creates a connection to the database based on configuration."""
+    db_type = get_database_type()
+    
+    if db_type == 'postgresql':
+        return get_postgresql_connection()
+    else:
+        return get_sqlite_connection()
+
+def get_sqlite_connection():
+    """Creates a connection to the SQLite database (existing functionality)."""
     conn = sqlite3.connect(DATABASE_FILE)
     # This allows us to access columns by name (like a dictionary)
     conn.row_factory = sqlite3.Row
@@ -24,9 +44,39 @@ def get_db_connection():
     conn.execute("PRAGMA temp_store=MEMORY")
     return conn
 
+def get_postgresql_connection():
+    """Creates a connection to the PostgreSQL database."""
+    try:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        
+        conn = psycopg2.connect(
+            host=os.getenv('DB_HOST'),
+            port=os.getenv('DB_PORT', 5432),
+            database=os.getenv('DB_NAME'),
+            user=os.getenv('DB_USER'),
+            password=os.getenv('DB_PASSWORD')
+        )
+        return conn
+    except ImportError:
+        print("Warning: psycopg2 not installed, falling back to SQLite")
+        return get_sqlite_connection()
+    except Exception as e:
+        print(f"Warning: PostgreSQL connection failed ({e}), falling back to SQLite")
+        return get_sqlite_connection()
+
 def optimize_database():
     """Create indexes and optimize the database for better performance."""
-    conn = get_db_connection()
+    db_type = get_database_type()
+    
+    if db_type == 'postgresql':
+        optimize_postgresql_database()
+    else:
+        optimize_sqlite_database()
+
+def optimize_sqlite_database():
+    """Optimize SQLite database (existing functionality)."""
+    conn = get_sqlite_connection()
     cursor = conn.cursor()
     
     # Create indexes for frequently queried columns
@@ -40,7 +90,31 @@ def optimize_database():
     
     conn.commit()
     conn.close()
-    print("Database optimized with indexes!")
+    print("SQLite database optimized with indexes!")
+
+def optimize_postgresql_database():
+    """Optimize PostgreSQL database."""
+    try:
+        conn = get_postgresql_connection()
+        cursor = conn.cursor()
+        
+        # Create indexes for frequently queried columns
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_locations_name ON locations(name)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_mentions_location_id ON mentions(location_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_mentions_book_id ON mentions(book_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_mentions_position ON mentions(text_position)")
+        
+        # Analyze the database for better query planning
+        cursor.execute("ANALYZE")
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        print("PostgreSQL database optimized with indexes!")
+        
+    except Exception as e:
+        print(f"Warning: PostgreSQL optimization failed ({e}), falling back to SQLite")
+        optimize_sqlite_database()
 
 # --- Web Interface ---
 @app.route('/')

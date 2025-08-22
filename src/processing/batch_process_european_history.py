@@ -19,9 +19,10 @@ import re
 sys.path.append(os.path.dirname(__file__))
 from extract_locations_fast import FastLocationExtractor, LocationMention
 
-# Add the database directory to the path to import periodization
+# Add the database directory to the path to import periodization and database functions
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'database'))
 from enhance_time_periods import extract_time_periods_from_text
+from database_integration import get_db_connection, get_database_type
 
 @dataclass
 class BookInfo:
@@ -37,6 +38,7 @@ class EuropeanHistoryBatchProcessor:
         self.extractor = None
         self.books_processed = 0
         self.total_locations = 0
+        self.db_type = get_database_type()
         
     def initialize_extractor(self):
         """Initialize the fast location extractor."""
@@ -178,6 +180,13 @@ class EuropeanHistoryBatchProcessor:
     
     def setup_database(self):
         """Set up database tables if they don't exist."""
+        if self.db_type == 'postgresql':
+            self.setup_postgresql_database()
+        else:
+            self.setup_sqlite_database()
+    
+    def setup_sqlite_database(self):
+        """Set up SQLite database tables (existing functionality)."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -259,10 +268,108 @@ class EuropeanHistoryBatchProcessor:
         
         conn.commit()
         conn.close()
-        print("Database setup completed")
+        print("SQLite database setup completed")
+    
+    def setup_postgresql_database(self):
+        """Set up PostgreSQL database tables."""
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            
+            # Check if books table exists and what columns it has
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns 
+                WHERE table_name = 'books'
+            """)
+            existing_columns = [col[0] for col in cursor.fetchall()]
+            
+            if not existing_columns:
+                # Create books table if it doesn't exist
+                cursor.execute('''
+                    CREATE TABLE books (
+                        id SERIAL PRIMARY KEY,
+                        title VARCHAR(500) NOT NULL,
+                        author VARCHAR(200),
+                        gutenberg_url TEXT UNIQUE,
+                        url TEXT,
+                        processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        release_date DATE,
+                        historical_start_year INTEGER,
+                        historical_end_year INTEGER,
+                        time_period_description TEXT
+                    )
+                ''')
+            
+            # Check if locations table exists
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns 
+                WHERE table_name = 'locations'
+            """)
+            locations_columns = [col[0] for col in cursor.fetchall()]
+            
+            if not locations_columns:
+                # Create locations table if it doesn't exist
+                cursor.execute('''
+                    CREATE TABLE locations (
+                        id SERIAL PRIMARY KEY,
+                        name VARCHAR(200) NOT NULL UNIQUE,
+                        latitude DOUBLE PRECISION NOT NULL,
+                        longitude DOUBLE PRECISION NOT NULL,
+                        country_code VARCHAR(10),
+                        population INTEGER
+                    )
+                ''')
+            
+            # Check if mentions table exists
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns 
+                WHERE table_name = 'mentions'
+            """)
+            mentions_columns = [col[0] for col in cursor.fetchall()]
+            
+            if not mentions_columns:
+                # Create mentions table if it doesn't exist
+                cursor.execute('''
+                    CREATE TABLE mentions (
+                        id SERIAL PRIMARY KEY,
+                        book_id INTEGER,
+                        location_id INTEGER,
+                        text_position INTEGER,
+                        context TEXT,
+                        estimated_year INTEGER,
+                        time_context TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (book_id) REFERENCES books (id),
+                        FOREIGN KEY (location_id) REFERENCES locations (id)
+                    )
+                ''')
+            
+            # Create indexes for better performance
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_books_title ON books(title)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_books_gutenberg_url ON books(gutenberg_url)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_locations_name ON locations(name)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_mentions_book_id ON mentions(book_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_mentions_location_id ON mentions(location_id)')
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            print("PostgreSQL database setup completed")
+            
+        except Exception as e:
+            print(f"Warning: PostgreSQL setup failed ({e}), falling back to SQLite")
+            self.db_type = 'sqlite'
+            self.setup_sqlite_database()
     
     def save_book_to_db(self, book: BookInfo, location_mentions: List[LocationMention]) -> int:
         """Save book and location mentions to database using normalized schema."""
+        if self.db_type == 'postgresql':
+            return self.save_book_to_postgresql(book, location_mentions)
+        else:
+            return self.save_book_to_sqlite(book, location_mentions)
+    
+    def save_book_to_sqlite(self, book: BookInfo, location_mentions: List[LocationMention]) -> int:
+        """Save book to SQLite database (existing functionality)."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -355,17 +462,150 @@ class EuropeanHistoryBatchProcessor:
                 ''', (book_id, location_id, mention.text_position, mention.context, estimated_year, time_context))
             
             conn.commit()
-            print(f"  ✅ Saved {len(location_mentions)} location mentions to database")
+            print(f"  ✅ Saved {len(location_mentions)} location mentions to SQLite database")
             if time_periods:
                 print(f"   Time periods saved: {time_period_description}")
             return book_id
             
         except Exception as e:
-            print(f"   Error saving to database: {e}")
+            print(f"   Error saving to SQLite database: {e}")
             conn.rollback()
             return None
         finally:
             conn.close()
+    
+    def save_book_to_postgresql(self, book: BookInfo, location_mentions: List[LocationMention]) -> int:
+        """Save book to PostgreSQL database."""
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            
+            # Extract time periods from book title and description (not full text)
+            title_and_desc = f"{book.title} {book.author or ''}"
+            print(f"  DEBUG: Title being processed for year extraction: '{title_and_desc}'")
+            time_periods = extract_time_periods_from_text(title_and_desc)
+            print(f"  DEBUG: Raw time periods extracted: {time_periods}")
+            
+            # Convert the time info to the expected format (same as archive system)
+            historical_start_year = None
+            historical_end_year = None
+            time_period_description = "No specific time period found"
+            
+            if time_periods.get('year'):
+                years = [int(y) for y in time_periods['year'] if y.isdigit()]
+                if years:
+                    historical_start_year = min(years)
+                    historical_end_year = max(years)
+                    time_period_description = f"Years mentioned: {', '.join(time_periods['year'])}"
+                    print(f"  DEBUG: Years found: {years}, Range: {historical_start_year}-{historical_end_year}")
+            
+            if time_periods.get('century'):
+                centuries = time_periods['century']
+                time_period_description += f"; Centuries: {', '.join(centuries)}"
+            
+            if time_periods.get('period'):
+                periods = time_periods['period']
+                time_period_description += f"; Periods: {', '.join(periods)}"
+            
+            if time_periods:
+                print(f"  Extracted time periods from title: {time_periods}")
+                if historical_start_year and historical_end_year:
+                    print(f"  Historical range: {historical_start_year} - {historical_end_year}")
+                else:
+                    print(f"  No clear historical range extracted")
+            else:
+                print(f"   DEBUG: No time periods found at all")
+            
+            # Insert book with time period information
+            cursor.execute('''
+                INSERT INTO books (
+                    title, author, gutenberg_url, url, 
+                    historical_start_year, historical_end_year, time_period_description, release_date
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (gutenberg_url) DO UPDATE SET
+                    title = EXCLUDED.title,
+                    author = EXCLUDED.author,
+                    url = EXCLUDED.url,
+                    historical_start_year = EXCLUDED.historical_start_year,
+                    historical_end_year = EXCLUDED.historical_end_year,
+                    time_period_description = EXCLUDED.time_period_description,
+                    release_date = EXCLUDED.release_date
+                RETURNING id
+            ''', (
+                book.title, book.author or "", 
+                f"https://www.gutenberg.org/ebooks/{book.gutenberg_id}", 
+                book.url,
+                historical_start_year, historical_end_year, time_period_description, book.release_date
+            ))
+            
+            result = cursor.fetchone()
+            if result:
+                book_id = result[0]
+            else:
+                # Book was already there, get its ID
+                cursor.execute('SELECT id FROM books WHERE gutenberg_url = %s', 
+                             (f"https://www.gutenberg.org/ebooks/{book.gutenberg_id}",))
+                book_id = cursor.fetchone()[0]
+            
+            # Process each location mention
+            for mention in location_mentions:
+                # First, ensure the location exists in the locations table
+                cursor.execute('''
+                    INSERT INTO locations (name, latitude, longitude, country_code, population)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (name) DO NOTHING
+                ''', (mention.location_name, mention.latitude, mention.longitude, mention.country_code, mention.population))
+                
+                # Get the location ID
+                cursor.execute('SELECT id FROM locations WHERE name = %s', (mention.location_name,))
+                result = cursor.fetchone()
+                if result:
+                    location_id = result[0]
+                else:
+                    # Location was already there, get its ID
+                    cursor.execute('SELECT id FROM locations WHERE name = %s', (mention.location_name,))
+                    location_id = cursor.fetchone()[0]
+                
+                # Extract time context from the mention context
+                mention_time_info = extract_time_periods_from_text(mention.context)
+                estimated_year = None
+                time_context = ""
+                
+                if mention_time_info.get('year'):
+                    years = [int(y) for y in mention_time_info['year'] if y.isdigit()]
+                    if years:
+                        estimated_year = years[0]  # Use first year mentioned in context
+                        time_context = f"Years: {', '.join(mention_time_info['year'])}"
+                
+                if mention_time_info.get('century'):
+                    if not time_context:
+                        time_context = f"Centuries: {', '.join(mention_time_info['century'])}"
+                    else:
+                        time_context += f"; Centuries: {', '.join(mention_time_info['century'])}"
+                
+                # Insert the mention with time context
+                cursor.execute('''
+                    INSERT INTO mentions (book_id, location_id, text_position, context, estimated_year, time_context)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT DO NOTHING
+                ''', (book_id, location_id, mention.text_position, mention.context, estimated_year, time_context))
+            
+            conn.commit()
+            print(f"  ✅ Saved {len(location_mentions)} location mentions to PostgreSQL database")
+            if time_periods:
+                print(f"   Time periods saved: {time_period_description}")
+            return book_id
+            
+        except Exception as e:
+            print(f"   Error saving to PostgreSQL database: {e}")
+            if conn:
+                conn.rollback()
+            return None
+        finally:
+            if conn:
+                cursor.close()
+                conn.close()
     
     def process_book(self, book: BookInfo) -> bool:
         """Process a single book and extract locations."""

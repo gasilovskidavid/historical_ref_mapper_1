@@ -2,9 +2,68 @@ import json
 import spacy
 import requests
 import sqlite3 
+import os
+from typing import Optional, Union
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# --- Database Configuration ---
+def get_database_type() -> str:
+    """Determine which database to use based on environment variables."""
+    if os.getenv('DB_TYPE') == 'postgresql':
+        return 'postgresql'
+    return 'sqlite'  # Default fallback
+
+def get_db_connection():
+    """Get database connection based on configuration."""
+    db_type = get_database_type()
+    
+    if db_type == 'postgresql':
+        return get_postgresql_connection()
+    else:
+        return get_sqlite_connection()
+
+def get_sqlite_connection():
+    """Get SQLite connection (existing functionality)."""
+    conn = sqlite3.connect('history_map.db')
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def get_postgresql_connection():
+    """Get PostgreSQL connection."""
+    try:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        
+        conn = psycopg2.connect(
+            host=os.getenv('DB_HOST'),
+            port=os.getenv('DB_PORT', 5432),
+            database=os.getenv('DB_NAME'),
+            user=os.getenv('DB_USER'),
+            password=os.getenv('DB_PASSWORD')
+        )
+        return conn
+    except ImportError:
+        print("Warning: psycopg2 not installed, falling back to SQLite")
+        return get_sqlite_connection()
+    except Exception as e:
+        print(f"Warning: PostgreSQL connection failed ({e}), falling back to SQLite")
+        return get_sqlite_connection()
+
 # --- Database Functions ---
 def setup_database(db_file):
     """Creates the database and tables if they don't exist."""
+    db_type = get_database_type()
+    
+    if db_type == 'postgresql':
+        setup_postgresql_database()
+    else:
+        setup_sqlite_database(db_file)
+
+def setup_sqlite_database(db_file):
+    """Setup SQLite database (existing functionality)."""
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
     
@@ -39,10 +98,72 @@ def setup_database(db_file):
     
     conn.commit()
     conn.close()
-    print(f"Database '{db_file}' is set up.")
+    print(f"SQLite database '{db_file}' is set up.")
+
+def setup_postgresql_database():
+    """Setup PostgreSQL database."""
+    try:
+        conn = get_postgresql_connection()
+        cursor = conn.cursor()
+        
+        # Create the books table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS books (
+            id SERIAL PRIMARY KEY,
+            title VARCHAR(500) NOT NULL UNIQUE,
+            url TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
+        
+        # Create the locations table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS locations (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(200) NOT NULL UNIQUE,
+            latitude DOUBLE PRECISION NOT NULL,
+            longitude DOUBLE PRECISION NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
+        
+        # Create the mentions linking table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS mentions (
+            id SERIAL PRIMARY KEY,
+            book_id INTEGER,
+            location_id INTEGER,
+            text_position INTEGER,
+            context TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (book_id) REFERENCES books (id),
+            FOREIGN KEY (location_id) REFERENCES locations (id)
+        )''')
+        
+        # Create indexes for better performance
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_books_title ON books(title)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_locations_name ON locations(name)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_mentions_book_id ON mentions(book_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_mentions_location_id ON mentions(location_id)')
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        print("PostgreSQL database is set up.")
+        
+    except Exception as e:
+        print(f"Warning: PostgreSQL setup failed ({e}), falling back to SQLite")
+        setup_sqlite_database('history_map.db')
 
 def save_results_to_db(db_file, book_title, book_url, found_locations):
-    """Saves the analysis results to the SQLite database."""
+    """Saves the analysis results to the database."""
+    db_type = get_database_type()
+    
+    if db_type == 'postgresql':
+        save_results_to_postgresql(book_title, book_url, found_locations)
+    else:
+        save_results_to_sqlite(db_file, book_title, book_url, found_locations)
+
+def save_results_to_sqlite(db_file, book_title, book_url, found_locations):
+    """Save results to SQLite (existing functionality)."""
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
     
@@ -68,7 +189,53 @@ def save_results_to_db(db_file, book_title, book_url, found_locations):
 
     conn.commit()
     conn.close()
-    print(f"Successfully saved {total_mentions} mentions for '{book_title}' to the database.")
+    print(f"Successfully saved {total_mentions} mentions for '{book_title}' to SQLite database.")
+
+def save_results_to_postgresql(book_title, book_url, found_locations):
+    """Save results to PostgreSQL."""
+    try:
+        conn = get_postgresql_connection()
+        cursor = conn.cursor()
+        
+        # 1. Add the book and get its ID
+        cursor.execute("INSERT INTO books (title, url) VALUES (%s, %s) ON CONFLICT (title) DO NOTHING", (book_title, book_url))
+        cursor.execute("SELECT id FROM books WHERE title = %s", (book_title,))
+        result = cursor.fetchone()
+        if result:
+            book_id = result[0]
+        else:
+            # Book was already there, get its ID
+            cursor.execute("SELECT id FROM books WHERE title = %s", (book_title,))
+            book_id = cursor.fetchone()[0]
+        
+        # 2. Add the locations and the mentions with context
+        total_mentions = 0
+        for name, data in found_locations.items():
+            # Add the location and get its ID
+            cursor.execute("INSERT INTO locations (name, latitude, longitude) VALUES (%s, %s, %s) ON CONFLICT (name) DO NOTHING",
+                           (name, data['lat'], data['lon']))
+            cursor.execute("SELECT id FROM locations WHERE name = %s", (name,))
+            result = cursor.fetchone()
+            if result:
+                location_id = result[0]
+            else:
+                # Location was already there, get its ID
+                cursor.execute("SELECT id FROM locations WHERE name = %s", (name,))
+                location_id = cursor.fetchone()[0]
+            
+            # Add each mention with its context
+            cursor.execute("INSERT INTO mentions (book_id, location_id, text_position, context) VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                           (book_id, location_id, mention['position'], mention['context']))
+            total_mentions += 1
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+        print(f"Successfully saved {total_mentions} mentions for '{book_title}' to PostgreSQL database.")
+        
+    except Exception as e:
+        print(f"Warning: PostgreSQL save failed ({e}), falling back to SQLite")
+        save_results_to_sqlite('history_map.db', book_title, book_url, found_locations)
 
 
 # --- Data Processing Functions ---
