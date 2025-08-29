@@ -2,7 +2,7 @@
 
 A comprehensive web application for mapping historical locations mentioned in books, with intelligent location extraction, gazetteer matching, and interactive visualization.
 
-**Live Demo**: [https://historical-ref-mapper-1-6lrl.onrender.com/](https://historical-ref-mapper-1-6lrl.onrender.com/)
+**Live Demo** (not functional during the PostgreSQL integration): [https://historical-ref-mapper-1-6lrl.onrender.com/](https://historical-ref-mapper-1-6lrl.onrender.com/)
 
 ## Features
 
